@@ -136,3 +136,7 @@ Tested on 2026-09-25 and 2026-09-26: Omarchy with Hyprland 0.56.2 (Lua config), 
 - **Switch to `dbus-daemon-units`**, as TeamViewer's knowledge base suggests for dbus-broker? It isn't the cause here. The lookup fails with either bus implementation, because the problem is where uwsm runs the desktop, not which bus it uses.
 - **Edit the SDDM session file?** `/usr/local/share/wayland-sessions/omarchy.desktop` belongs to the `omarchy-settings` package, so an update would silently undo the change.
 - **Keep the monitor at scale 1 permanently?** That works too: set it in `~/.config/hypr/monitors.lua`. At 4K that makes everything small all the time; the wrapper lowers the resolution only during a session instead.
+
+## License
+
+[MIT](LICENSE). This project is not affiliated with TeamViewer or Omarchy. TeamViewer is a trademark of TeamViewer Germany GmbH.
