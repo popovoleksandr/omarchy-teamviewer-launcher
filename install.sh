@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs teamviewer-omarchy-launcher for the current user. No sudo, safe to re-run.
+# Installs omarchy-teamviewer-launcher for the current user. No sudo, safe to re-run.
 
 set -euo pipefail
 
@@ -7,8 +7,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BIN_DIR="$HOME/.local/bin"
 DBUS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dbus-1/services"
 SERVICE=com.teamviewer.TeamViewer.Desktop.service
-MARK_BEGIN="# >>> teamviewer-omarchy-launcher >>>"
-MARK_END="# <<< teamviewer-omarchy-launcher <<<"
+MARK_BEGIN="# >>> omarchy-teamviewer-launcher >>>"
+MARK_END="# <<< omarchy-teamviewer-launcher <<<"
 
 warn() {
   echo "warning: $*" >&2
@@ -64,7 +64,7 @@ install -Dm755 "$ROOT/bin/omarchy-teamviewer-bus-placeholder" "$BIN_DIR/omarchy-
 
 echo "Installing D-Bus override to $DBUS_DIR/$SERVICE"
 mkdir -p "$DBUS_DIR"
-if [[ -f $DBUS_DIR/$SERVICE ]] && ! grep -q teamviewer-omarchy-launcher "$DBUS_DIR/$SERVICE"; then
+if [[ -f $DBUS_DIR/$SERVICE ]] && ! grep -q omarchy-teamviewer-launcher "$DBUS_DIR/$SERVICE"; then
   backup="$DBUS_DIR/$SERVICE.bak.$(date +%s)"
   mv "$DBUS_DIR/$SERVICE" "$backup"
   echo "  moved the existing override to $backup"

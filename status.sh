@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks every piece teamviewer-omarchy-launcher relies on and summarises the
+# Checks every piece omarchy-teamviewer-launcher relies on and summarises the
 # last incoming connection from TeamViewer's logs.
 
 DAEMON_LOG=/opt/teamviewer/logfiles/TeamViewer15_Logfile.log

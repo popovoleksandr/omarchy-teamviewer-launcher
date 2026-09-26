@@ -1,4 +1,4 @@
-# teamviewer-omarchy-launcher
+# omarchy-teamviewer-launcher
 
 Makes incoming TeamViewer connections work on [Omarchy](https://omarchy.org/), where Hyprland is started by uwsm from SDDM.
 
@@ -28,8 +28,8 @@ Without it, TeamViewer 15 on Omarchy shows the partner an endless "Connecting to
 ## Install
 
 ```sh
-git clone <this repo> ~/Projects/teamviewer-omarchy-launcher   # or copy the folder
-cd ~/Projects/teamviewer-omarchy-launcher
+git clone <this repo> ~/Projects/omarchy-teamviewer-launcher   # or copy the folder
+cd ~/Projects/omarchy-teamviewer-launcher
 ./install.sh
 ```
 
