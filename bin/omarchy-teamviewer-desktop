@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Started by D-Bus activation in place of /opt/teamviewer/tv_bin/TeamViewer_Desktop
+# (see share/com.teamviewer.TeamViewer.Desktop.service.in).
+#
+# teamviewerd asks the user bus for com.teamviewer.TeamViewer.Desktop on every
+# incoming connection. On Hyprland that helper needs two things it doesn't get
+# by default:
+#   1. "wlroots" in XDG_CURRENT_DESKTOP. Otherwise it uses the RemoteDesktop
+#      portal, which xdg-desktop-portal-hyprland does not implement.
+#   2. Monitor scale 1. Its wlroots screencopy backend rejects every frame whose
+#      pixel size differs from the monitor's logical (scaled) size.
+# While the helper runs, each scaled monitor switches to scale 1 at the
+# resolution that keeps its layout (3840x2160 at 1.25 -> 3072x1728, at 2 ->
+# 1920x1080), so everything stays the same size. Modes are restored when the
+# helper exits. Run with --restore to put saved modes back by hand.
+
+set -uo pipefail
+
+TV_DESKTOP=/opt/teamviewer/tv_bin/TeamViewer_Desktop
+STATE_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omarchy-teamviewer-scales.json"
+
+log() {
+  echo "omarchy-teamviewer-desktop: $*" >&2
+}
+
+can_drive_hyprland() {
+  command -v hyprctl >/dev/null && command -v jq >/dev/null && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]
+}
+
+# Omarchy configures Hyprland in Lua, where monitors change through hl.monitor;
+# older installs use hyprland.conf, where the same change is a monitor keyword.
+set_monitor() {
+  local name=$1 mode=$2 position=$3 scale=$4 transform=$5
+
+  # The name is spliced into Lua source or a keyword line, so only let plain
+  # connector names through.
+  if [[ ! $name =~ ^[A-Za-z0-9._-]+$ ]]; then
+    log "skipping monitor with unexpected name: $name"
+    return 1
+  fi
+
+  if [[ -f ${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua ]]; then
+    hyprctl eval "hl.monitor({ output = \"$name\", mode = \"$mode\", position = \"$position\", scale = $scale, transform = $transform })" >/dev/null
+  else
+    hyprctl keyword monitor "$name,$mode,$position,$scale,transform,$transform" >/dev/null
+  fi
+}
+
+current_size() {
+  hyprctl -j monitors | jq -r --arg name "$1" '.[] | select(.name == $name) | "\(.width)x\(.height)"'
+}
+
+# For every scaled monitor prints: name, logical size, a listed mode of exactly
+# that size (or "-"), the same size as a custom mode, and the closest listed mode
+# with the same aspect ratio to fall back on.
+plan_modes() {
+  jq -r '
+    def abs: if . < 0 then -. else . end;
+    def modes: [.availableModes[]
+      | capture("^(?<w>[0-9]+)x(?<h>[0-9]+)@(?<r>[0-9.]+)Hz$")
+      | {w: (.w | tonumber), h: (.h | tonumber), r: (.r | tonumber)}];
+    .[] | select(.scale != 1)
+    | (.width / .scale | round) as $tw
+    | (.height / .scale | round) as $th
+    | .refreshRate as $rate
+    | (.width / .height) as $aspect
+    | modes as $modes
+    | ($modes | map(select(.w == $tw and .h == $th)) | min_by(.r - $rate | abs)) as $exact
+    | ($modes | map(select((.w / .h) - $aspect | abs < 0.01))) as $same_aspect
+    | ((if ($same_aspect | length) > 0 then $same_aspect else $modes end)
+        | min_by([(.w - $tw | abs), -.w, (.r - $rate | abs)])) as $nearest
+    | [.name,
+       "\($tw)x\($th)",
+       (if $exact then "\($exact.w)x\($exact.h)@\($exact.r)" else "-" end),
+       "\($tw)x\($th)@\($rate | round)",
+       (if $nearest then "\($nearest.w)x\($nearest.h)@\($nearest.r)" else "preferred" end),
+       .transform]
+    | @tsv'
+}
+
+switch_to_logical_resolution() {
+  local monitors
+  monitors=$(hyprctl -j monitors) || return
+
+  # A state file left by a run that never restored holds the real originals;
+  # the monitors are still switched from that run, so don't overwrite it.
+  if [[ ! -s $STATE_FILE ]]; then
+    jq -c '[.[] | select(.scale != 1) | {
+      name,
+      mode: "\(.width)x\(.height)@\(.refreshRate)",
+      position: "\(.x)x\(.y)",
+      scale,
+      transform
+    }]' <<<"$monitors" >"$STATE_FILE" || return
+  fi
+
+  plan_modes <<<"$monitors" |
+    while IFS=$'\t' read -r name size exact custom nearest transform; do
+      if [[ $exact != - ]]; then
+        set_monitor "$name" "$exact" auto 1 "$transform"
+      else
+        # Drivers and monitors often refuse modes the monitor doesn't list; then
+        # Hyprland falls back on its own, so only step in if it picked badly.
+        set_monitor "$name" "$custom" auto 1 "$transform"
+        if [[ $(current_size "$name") != "$size" && $(current_size "$name") != "${nearest%@*}" ]]; then
+          set_monitor "$name" "$nearest" auto 1 "$transform"
+        fi
+      fi
+      log "$name: $(current_size "$name") at scale 1 for TeamViewer (logical size $size)"
+    done
+}
+
+restore_scales() {
+  [[ -s $STATE_FILE ]] || return 0
+
+  jq -r '.[] | [.name, .mode, .position, .scale, .transform] | @tsv' "$STATE_FILE" |
+    while IFS=$'\t' read -r name mode position scale transform; do
+      set_monitor "$name" "$mode" "$position" "$scale" "$transform" && log "$name: $mode at scale $scale restored"
+    done
+  rm -f "$STATE_FILE"
+}
+
+if [[ ${1:-} == --restore ]]; then
+  can_drive_hyprland || { log "needs hyprctl, jq and a running Hyprland session"; exit 1; }
+  restore_scales
+  exit
+fi
+
+case ":${XDG_CURRENT_DESKTOP:-}:" in
+*:wlroots:*) ;;
+*) export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:+$XDG_CURRENT_DESKTOP:}wlroots" ;;
+esac
+
+if can_drive_hyprland; then
+  switch_to_logical_resolution
+  trap restore_scales EXIT
+else
+  log "hyprctl, jq or HYPRLAND_INSTANCE_SIGNATURE missing; leaving monitor scales alone"
+fi
+
+"$TV_DESKTOP" "$@" &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null' TERM INT HUP
+
+# wait returns early whenever a trapped signal arrives, so keep waiting until
+# the helper is really gone before the EXIT trap restores the scales.
+status=0
+while kill -0 "$child" 2>/dev/null; do
+  wait "$child"
+  status=$?
+done
+exit "$status"

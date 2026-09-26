@@ -1,0 +1,6 @@
+# Managed by teamviewer-omarchy-launcher. Overrides TeamViewer's own
+# /usr/share/dbus-1/services/com.teamviewer.TeamViewer.Desktop.service so the
+# desktop helper starts through the Hyprland wrapper.
+[D-BUS Service]
+Name=com.teamviewer.TeamViewer.Desktop
+Exec=@BIN_DIR@/omarchy-teamviewer-desktop

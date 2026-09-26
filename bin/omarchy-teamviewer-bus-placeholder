@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Started in the background from the login shell profile while SDDM starts the
+# session (install.sh adds that block to ~/.bash_profile, ~/.zprofile or ~/.profile).
+#
+# teamviewerd and TeamViewer_Desktop find the session bus by walking the logind
+# session leader's descendants for a process with a known name (dbus-daemon,
+# gnome-session, plasmashell, ...) and reading DBUS_SESSION_BUS_ADDRESS from its
+# environment. uwsm starts Hyprland as a systemd user unit, outside that process
+# tree, so nothing matches. This parks an idle dbus-daemon inside the tree whose
+# environment points at the real user bus. Nothing ever connects to its own socket.
+
+: "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+
+# exec keeps this PID, so the dbus-daemon stays a child of the login shell.
+exec /usr/bin/dbus-daemon --session --nofork --nopidfile \
+  --address="unix:path=$XDG_RUNTIME_DIR/teamviewer-placeholder-bus"
