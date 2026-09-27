@@ -1,0 +1,8 @@
+// >>> omarchy-teamviewer-launcher >>>
+// Setup > TeamViewer, added by omarchy-teamviewer-launcher. `omarchy-teamviewer-launcher unsetup` removes it.
+"setup.teamviewer": {"icon":"󰢹","label":"TeamViewer","aliases":["teamviewer"],"description":"Incoming connections on Omarchy","when":"command -v @CMD@ >/dev/null"},
+"setup.teamviewer.install": {"icon":"󰉉","label":"Install TeamViewer","when":"! test -x /opt/teamviewer/tv_bin/TeamViewer_Desktop","action":"omarchy-launch-floating-terminal-with-presentation 'omarchy pkg aur add teamviewer && sudo systemctl enable --now teamviewerd'"},
+"setup.teamviewer.connections": {"icon":"󰢹","label":"Incoming Connections","checked":"@CMD@ is-enabled","action":"omarchy-launch-floating-terminal-with-presentation '@CMD@ toggle'"},
+"setup.teamviewer.status": {"icon":"","label":"Status","action":"omarchy-launch-floating-terminal-with-presentation '@CMD@ status'"},
+"setup.teamviewer.restore": {"icon":"󰍹","label":"Restore Display","description":"Resolution and scale back after a session","action":"omarchy-launch-floating-terminal-with-presentation '@CMD@ restore'"},
+// <<< omarchy-teamviewer-launcher <<<

@@ -1,0 +1,341 @@
+#!/usr/bin/env bash
+# omarchy-teamviewer-launcher: makes incoming TeamViewer connections work on
+# Omarchy's uwsm-managed Hyprland session. Run without arguments for help.
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)
+source "$ROOT/lib/common.sh"
+
+usage() {
+  cat <<EOF
+Usage: omarchy-teamviewer-launcher <command>
+
+  menu        Open Setup > TeamViewer in the Omarchy menu (adds it on first use)
+  enable      Turn incoming TeamViewer connections on for your user
+  disable     Turn them off again (TeamViewer's stock launcher takes over)
+  toggle      enable or disable, whichever isn't active
+  status      Check every piece and summarise the last incoming connection
+  restore     Put monitor resolutions and scales back after a session
+  setup       Add Setup > TeamViewer to the Omarchy menu
+  unsetup     Remove Setup > TeamViewer from the Omarchy menu
+EOF
+}
+
+require_teamviewer() {
+  [[ -x $TV_DESKTOP ]] ||
+    die "TeamViewer is not installed in /opt/teamviewer (install the AUR package: omarchy pkg aur add teamviewer)"
+  [[ -x /usr/bin/dbus-daemon ]] || die "/usr/bin/dbus-daemon is missing (package: dbus)"
+  local cmd
+  for cmd in hyprctl jq busctl; do
+    command -v "$cmd" >/dev/null || die "$cmd is missing"
+  done
+  command -v uwsm >/dev/null || warn "uwsm not found; this is meant for Omarchy's uwsm-managed Hyprland session"
+  systemctl is-enabled --quiet sddm 2>/dev/null ||
+    warn "SDDM is not the display manager; the session bus placeholder only starts under SDDM"
+}
+
+# teamviewerd must run for any connection. Offer to enable it when there's a
+# terminal to ask for the sudo password in.
+ensure_daemon() {
+  systemctl is-enabled --quiet teamviewerd 2>/dev/null && return
+  if [[ -t 0 ]]; then
+    echo "Enabling the TeamViewer daemon (teamviewerd); this asks for your sudo password"
+    sudo systemctl enable --now teamviewerd
+  else
+    warn "teamviewerd is not enabled; run: sudo systemctl enable --now teamviewerd"
+  fi
+}
+
+# A checkout copies the scripts to ~/.local/bin and starts the placeholder from
+# a block in the login profile.
+install_checkout_files() {
+  echo "Installing scripts to $BIN_DIR"
+  install -Dm755 "$ROOT/bin/omarchy-teamviewer-desktop" "$DESKTOP_BIN"
+  install -Dm755 "$ROOT/bin/omarchy-teamviewer-bus-placeholder" "$PLACEHOLDER_BIN"
+
+  local profile tmp
+  profile=$(profile_file)
+  echo "Adding the session bus placeholder to $profile"
+  if [[ ! -e $profile && ${profile##*/} == .bash_profile ]]; then
+    # A new ~/.bash_profile hides ~/.bashrc from login shells unless it sources it.
+    echo '[[ -f ~/.bashrc ]] && . ~/.bashrc' >"$profile"
+  fi
+  tmp=$(mktemp)
+  strip_block "$profile" "$PROFILE_BEGIN" "$PROFILE_END" >"$tmp"
+  # cat instead of mv keeps the file's permissions and any symlink in place.
+  cat "$tmp" >"$profile"
+  rm -f "$tmp"
+  if [[ -s $profile && -n $(tail -n 1 "$profile") ]]; then
+    echo >>"$profile"
+  fi
+  cat >>"$profile" <<EOF
+$PROFILE_BEGIN
+# Lets TeamViewer find the session D-Bus under uwsm. Runs only in the SDDM login shell.
+if [ "\$(cat /proc/\$PPID/comm 2>/dev/null)" = sddm-helper ] && [ -x "$PLACEHOLDER_BIN" ]; then
+  "$PLACEHOLDER_BIN" >/dev/null 2>&1 &
+fi
+$PROFILE_END
+EOF
+}
+
+# Removes what a checkout installed: the ~/.local/bin copies and the profile
+# block. The package doesn't need them, and a second placeholder would clash.
+remove_checkout_files() {
+  local file tmp
+  for file in "$HOME/.local/bin/omarchy-teamviewer-desktop" "$HOME/.local/bin/omarchy-teamviewer-bus-placeholder"; do
+    if [[ -f $file ]] && grep -qs omarchy-teamviewer "$file"; then
+      rm -f "$file"
+      echo "Removed $file"
+    fi
+  done
+  for file in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile" "${ZDOTDIR:-$HOME}/.zprofile"; do
+    if [[ -f $file ]] && grep -qF "$PROFILE_BEGIN" "$file"; then
+      tmp=$(mktemp)
+      strip_block "$file" "$PROFILE_BEGIN" "$PROFILE_END" >"$tmp"
+      cat "$tmp" >"$file"
+      rm -f "$tmp"
+      echo "Removed the placeholder block from $file"
+    fi
+  done
+}
+
+cmd_enable() {
+  require_teamviewer
+  ensure_daemon
+
+  if $PACKAGED; then
+    remove_checkout_files
+  else
+    install_checkout_files
+  fi
+
+  echo "Installing the D-Bus override to $DBUS_FILE"
+  mkdir -p "$(dirname "$DBUS_FILE")"
+  if [[ -f $DBUS_FILE ]] && ! is_enabled; then
+    local backup="$DBUS_FILE.bak.$(date +%s)"
+    mv "$DBUS_FILE" "$backup"
+    echo "  moved the existing override to $backup"
+  fi
+  sed "s|@DESKTOP@|$DESKTOP_BIN|g" "$ROOT/share/$SERVICE.in" >"$DBUS_FILE"
+  reload_user_bus || warn "could not reload the user bus; the override takes effect after the next login"
+
+  cmd_setup true
+
+  echo
+  if placeholder_in_session >/dev/null; then
+    echo "Done. The session bus placeholder is already running; incoming connections work now."
+  else
+    echo "Done. Log out and back in (or reboot) once so the placeholder starts inside your session."
+  fi
+  echo "Check everything with: $CMD status"
+}
+
+cmd_disable() {
+  # Put scales back if a session is running or ended without restoring them.
+  if [[ -s $STATE_FILE ]]; then
+    "$ROOT/bin/omarchy-teamviewer-desktop" --restore || true
+  fi
+
+  if is_enabled; then
+    rm -f "$DBUS_FILE"
+    echo "Removed $DBUS_FILE"
+    reload_user_bus || true
+  else
+    echo "Incoming connections weren't turned on by omarchy-teamviewer-launcher"
+  fi
+
+  remove_checkout_files
+
+  if pkill -u "$UID" -f 'dbus-daemon .*teamviewer-placeholder-bus'; then
+    echo "Stopped the session bus placeholder"
+  fi
+
+  echo
+  echo "Done. TeamViewer is back to its stock launcher (incoming connections stall again on Omarchy)."
+  echo "Setup > TeamViewer stays in the Omarchy menu; \`$CMD unsetup\` removes it."
+}
+
+cmd_toggle() {
+  if is_enabled; then cmd_disable; else cmd_enable; fi
+}
+
+cmd_restore() {
+  exec "$ROOT/bin/omarchy-teamviewer-desktop" --restore
+}
+
+cmd_status() {
+  ok() { printf '  \e[32mok\e[0m    %s\n' "$*"; }
+  bad() { printf '  \e[31mFAIL\e[0m  %s\n' "$*"; }
+  note() { printf '  ..    %s\n' "$*"; }
+  todo() { printf '  \e[33mtodo\e[0m  %s\n' "$*"; }
+
+  echo "TeamViewer"
+  if [[ -x $TV_DESKTOP ]]; then
+    ok "installed ($(pacman -Q teamviewer 2>/dev/null || echo /opt/teamviewer))"
+  else
+    bad "not installed in /opt/teamviewer: omarchy pkg aur add teamviewer"
+  fi
+  if systemctl is-active --quiet teamviewerd; then
+    ok "teamviewerd running"
+  else
+    bad "teamviewerd not running: sudo systemctl enable --now teamviewerd"
+  fi
+
+  echo "Launcher"
+  if is_enabled; then
+    ok "incoming connections turned on (D-Bus override $DBUS_FILE)"
+  else
+    bad "incoming connections turned off: $CMD enable"
+  fi
+  if $PACKAGED; then
+    if [[ -f $PROFILE_D ]]; then
+      ok "placeholder starter $PROFILE_D"
+    else
+      bad "$PROFILE_D is missing: reinstall the omarchy-teamviewer-launcher package"
+    fi
+  elif is_enabled; then
+    if [[ -x $DESKTOP_BIN && -x $PLACEHOLDER_BIN ]]; then
+      ok "scripts in $BIN_DIR"
+    else
+      bad "scripts missing from $BIN_DIR: $CMD enable"
+    fi
+    if grep -qsF "$PROFILE_BEGIN" "$(profile_file)"; then
+      ok "placeholder block in $(profile_file)"
+    else
+      bad "placeholder block missing from $(profile_file): $CMD enable"
+    fi
+  fi
+  note "installed as $($PACKAGED && echo "the omarchy-teamviewer-launcher package" || echo "a checkout in $ROOT")"
+
+  echo "Session bus placeholder"
+  local session leader pid
+  session=$(loginctl show-user "$USER" -p Display --value 2>/dev/null) || true
+  leader=$(loginctl show-session "$session" -p Leader --value 2>/dev/null) || true
+  if pid=$(placeholder_in_session); then
+    ok "dbus-daemon $pid runs inside login session $session (leader $leader)"
+  elif pgrep -u "$UID" -f 'dbus-daemon .*teamviewer-placeholder-bus' >/dev/null; then
+    bad "placeholder runs outside login session ${session:-?}; TeamViewer won't see it"
+  elif is_enabled; then
+    todo "not running yet: log out and back in once"
+  else
+    note "not running (incoming connections are turned off)"
+  fi
+
+  echo "Hyprland"
+  if grep -qs RemoteDesktop /usr/share/xdg-desktop-portal/portals/hyprland.portal; then
+    note "the Hyprland portal now offers RemoteDesktop; the wlroots workaround may no longer be needed"
+  else
+    note "the Hyprland portal has no RemoteDesktop; TeamViewer uses its wlroots backend instead"
+  fi
+  if command -v hyprctl >/dev/null && command -v jq >/dev/null; then
+    hyprctl -j monitors 2>/dev/null | jq -r '.[] | "\(.name) \(.width)x\(.height) scale \(.scale)"' |
+      while read -r line; do note "$line"; done
+  fi
+  if [[ -s $STATE_FILE ]]; then
+    note "scales are switched to 1 for a TeamViewer session (saved originals: $STATE_FILE)"
+  fi
+
+  echo "Omarchy menu"
+  if grep -qsF "$MENU_BEGIN" "$MENU_FILE"; then
+    ok "Setup > TeamViewer is in $MENU_FILE"
+  else
+    todo "Setup > TeamViewer isn't in the menu yet: $CMD setup"
+  fi
+
+  echo "Last incoming connection"
+  local launch backend capture
+  launch=$(grep -E "LaunchDesktopProcess: session bus not found|StartServiceByName: Starting com.teamviewer.TeamViewer.Desktop" "$DAEMON_LOG" 2>/dev/null | tail -n 1) || true
+  case $launch in
+  "") note "none in $DAEMON_LOG" ;;
+  *"session bus not found"*) bad "${launch:0:23} daemon could not find the session bus" ;;
+  *) ok "${launch:0:23} daemon started the helper through D-Bus" ;;
+  esac
+
+  backend=$(grep -E "DesktopMainLin: .* SPI created" "$HELPER_LOG" 2>/dev/null | tail -n 1) || true
+  case $backend in
+  "") ;;
+  *WLRoots*) ok "${backend:0:23} helper used the wlroots backend" ;;
+  *) bad "${backend:0:23} helper used: ${backend##*DesktopMainLin: }" ;;
+  esac
+
+  capture=$(grep -E "Desktop grab (succeeded|failed)|Unsupported shared memory buffer|RemoteDesktopPortal error|no session bus connection" "$HELPER_LOG" 2>/dev/null | tail -n 1) || true
+  case $capture in
+  "") ;;
+  *"grab succeeded"*) ok "${capture:0:23} screen capture works" ;;
+  *) bad "${capture:0:23} ${capture##*DW1}" ;;
+  esac
+}
+
+cmd_setup() {
+  local quiet=${1:-false} tmp
+  [[ $CMD != *[\"\'\\]* ]] || die "can't add menu entries for a path with quotes: $CMD"
+  mkdir -p "$(dirname "$MENU_FILE")"
+  [[ -s $MENU_FILE ]] || printf '{\n}\n' >"$MENU_FILE"
+
+  tmp=$(mktemp)
+  strip_block "$MENU_FILE" "$MENU_BEGIN" "$MENU_END" >"$tmp"
+  # Insert right after the opening brace. Every entry ends with a comma, which
+  # is valid before other entries and dropped by the menu parser before "}".
+  if ! grep -qE '^[[:space:]]*\{[[:space:]]*$' "$tmp"; then
+    rm -f "$tmp"
+    warn "$MENU_FILE has no line with just \"{\" to add Setup > TeamViewer after; add it by hand from $ROOT/share/menu.jsonc"
+    return 0
+  fi
+  awk -v block="$(sed "s|@CMD@|$CMD|g" "$ROOT/share/menu.jsonc" | sed 's/^/  /')" \
+    '!done && /^[[:space:]]*\{[[:space:]]*$/ { print; print block; done = 1; next } { print }' "$tmp" >"$tmp.new"
+  rm -f "$tmp"
+  if ! menu_jsonc_valid "$tmp.new"; then
+    rm -f "$tmp.new"
+    warn "adding Setup > TeamViewer would break $MENU_FILE; it is unchanged"
+    return 0
+  fi
+
+  if cmp -s "$tmp.new" "$MENU_FILE"; then
+    rm -f "$tmp.new"
+    $quiet || echo "Setup > TeamViewer is already in $MENU_FILE"
+    return 0
+  fi
+  cp "$MENU_FILE" "$MENU_FILE.bak.omarchy-teamviewer-launcher"
+  cat "$tmp.new" >"$MENU_FILE"
+  rm -f "$tmp.new"
+  omarchy-menu refresh >/dev/null 2>&1 || true
+  echo "Added Setup > TeamViewer to $MENU_FILE (backup: $MENU_FILE.bak.omarchy-teamviewer-launcher)"
+}
+
+cmd_unsetup() {
+  local tmp
+  if ! grep -qsF "$MENU_BEGIN" "$MENU_FILE"; then
+    echo "Setup > TeamViewer isn't in $MENU_FILE"
+    return
+  fi
+  tmp=$(mktemp)
+  strip_block "$MENU_FILE" "$MENU_BEGIN" "$MENU_END" >"$tmp"
+  menu_jsonc_valid "$tmp" || { rm -f "$tmp"; die "removing the entries would break $MENU_FILE; it is unchanged"; }
+  cat "$tmp" >"$MENU_FILE"
+  rm -f "$tmp"
+  omarchy-menu refresh >/dev/null 2>&1 || true
+  echo "Removed Setup > TeamViewer from $MENU_FILE"
+}
+
+cmd_menu() {
+  cmd_setup true
+  exec omarchy-menu summon setup.teamviewer
+}
+
+case "${1:-}" in
+menu) cmd_menu ;;
+enable) cmd_enable ;;
+disable) cmd_disable ;;
+toggle) cmd_toggle ;;
+status) cmd_status ;;
+restore) cmd_restore ;;
+is-enabled) is_enabled ;;
+setup) cmd_setup ;;
+unsetup) cmd_unsetup ;;
+-h | --help | help | "") usage ;;
+*)
+  usage >&2
+  exit 1
+  ;;
+esac

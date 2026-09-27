@@ -1,0 +1,23 @@
+post_install() {
+  cat <<'MSG'
+==> omarchy-teamviewer-launcher: open "Omarchy TeamViewer Launcher" from the app launcher
+    (or run: omarchy-teamviewer-launcher enable) to turn incoming connections on for your user.
+    Then log out and back in once.
+MSG
+}
+
+post_upgrade() {
+  cat <<'MSG'
+==> omarchy-teamviewer-launcher: run "omarchy-teamviewer-launcher enable" once to refresh your
+    D-Bus override and Setup > TeamViewer in the Omarchy menu.
+MSG
+}
+
+pre_remove() {
+  cat <<'MSG'
+==> omarchy-teamviewer-launcher: pacman can't undo per-user changes. Before removing, run
+    "omarchy-teamviewer-launcher disable" and "omarchy-teamviewer-launcher unsetup".
+    If you didn't, TeamViewer falls back to its stock helper, and incoming connections
+    stall again as they did before.
+MSG
+}

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Omarchy TeamViewer Launcher
+GenericName=TeamViewer Settings
+Comment=Turn on incoming TeamViewer connections on Omarchy's Hyprland desktop
+Exec=omarchy-teamviewer-launcher menu
+Icon=omarchy-teamviewer-launcher
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=teamviewer;remote;support;omarchy;hyprland;wayland;

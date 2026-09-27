@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Started in the background from the login shell profile while SDDM starts the
-# session (install.sh adds that block to ~/.bash_profile, ~/.zprofile or ~/.profile).
+# Started in the background by the login shell SDDM runs for the session: from
+# /etc/profile.d/omarchy-teamviewer-launcher.sh when installed as a package, or
+# from a block in ~/.bash_profile, ~/.zprofile or ~/.profile from a checkout.
 #
 # teamviewerd and TeamViewer_Desktop find the session bus by walking the logind
 # session leader's descendants for a process with a known name (dbus-daemon,

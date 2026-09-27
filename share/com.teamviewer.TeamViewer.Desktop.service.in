@@ -1,6 +1,7 @@
 # Managed by omarchy-teamviewer-launcher. Overrides TeamViewer's own
 # /usr/share/dbus-1/services/com.teamviewer.TeamViewer.Desktop.service so the
-# desktop helper starts through the Hyprland wrapper.
+# desktop helper starts through the Hyprland wrapper. If the wrapper is gone
+# (for example the package was removed), TeamViewer's own helper runs instead.
 [D-BUS Service]
 Name=com.teamviewer.TeamViewer.Desktop
-Exec=@BIN_DIR@/omarchy-teamviewer-desktop
+Exec=/bin/sh -c 'w=@DESKTOP@; [ -x "$w" ] || w=/opt/teamviewer/tv_bin/TeamViewer_Desktop; exec "$w" "$@"' omarchy-teamviewer-launcher

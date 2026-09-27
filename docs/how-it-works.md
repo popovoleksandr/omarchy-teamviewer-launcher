@@ -47,7 +47,7 @@ Things tested that did **not** help:
 
 **Fix.** SDDM runs every Wayland session through `/usr/share/sddm/scripts/wayland-session`. That script re-executes itself as a *login shell* of the user's shell (`bash --login`), so `~/.bash_profile` runs **inside** the session tree, as a child of `sddm-helper`. At that point the environment from PAM already holds `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus`.
 
-The profile block starts `omarchy-teamviewer-bus-placeholder` in the background. That script `exec`s a real `/usr/bin/dbus-daemon` that listens on its own unused socket, so its process name is `dbus-daemon` and its parent is the login shell. TeamViewer finds it, reads the real bus address from its environment, and from then on talks to the real bus.
+The profile block starts `omarchy-teamviewer-bus-placeholder` in the background. The package does the same from `/etc/profile.d/omarchy-teamviewer-launcher.sh` instead: a login shell reads `/etc/profile`, which sources `/etc/profile.d/*.sh`, before `~/.bash_profile` (on Arch, zsh reads `/etc/profile` through `/etc/zsh/zprofile`). That script starts the placeholder only for users whose D-Bus override (below) is in place, so installing the package changes nothing for anyone who hasn’t run `omarchy-teamviewer-launcher enable`. That script `exec`s a real `/usr/bin/dbus-daemon` that listens on its own unused socket, so its process name is `dbus-daemon` and its parent is the login shell. TeamViewer finds it, reads the real bus address from its environment, and from then on talks to the real bus.
 
 Details:
 
@@ -75,7 +75,7 @@ TeamViewer's portal backend requires the **RemoteDesktop** portal, which combine
 DesktopMainLin: WLRoots SPI created
 ```
 
-**Fix.** A per-user D-Bus service file, `~/.local/share/dbus-1/services/com.teamviewer.TeamViewer.Desktop.service`, takes priority over TeamViewer's copy in `/usr/share/dbus-1/services/`. Its `Exec=` points at `omarchy-teamviewer-desktop`, which appends `wlroots` to `XDG_CURRENT_DESKTOP` and then runs the real helper. No other app sees the changed variable.
+**Fix.** A per-user D-Bus service file, `~/.local/share/dbus-1/services/com.teamviewer.TeamViewer.Desktop.service`, takes priority over TeamViewer's copy in `/usr/share/dbus-1/services/`. Its `Exec=` points at `omarchy-teamviewer-desktop`, which appends `wlroots` to `XDG_CURRENT_DESKTOP` and then runs the real helper. No other app sees the changed variable. The `Exec=` line runs the wrapper through `/bin/sh -c` and falls back to `/opt/teamviewer/tv_bin/TeamViewer_Desktop` when the wrapper is missing, so removing the package without running `disable` leaves TeamViewer as it was, not broken.
 
 ## Problem 3: fractional scaling
 
