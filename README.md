@@ -32,9 +32,9 @@ Without it, TeamViewer 15 on Omarchy shows the partner an endless "Connecting to
 The AUR package isn't published yet, because new AUR account registration is paused (as of 2026-09-26). Until then, install the package attached to the [latest release](https://github.com/popovoleksandr/omarchy-teamviewer-launcher/releases/latest):
 
 ```sh
-curl -LO https://github.com/popovoleksandr/omarchy-teamviewer-launcher/releases/download/v1.0.0/omarchy-teamviewer-launcher-1.0.0-1-any.pkg.tar.zst
-sha256sum omarchy-teamviewer-launcher-1.0.0-1-any.pkg.tar.zst    # compare with the release notes
-sudo pacman -U omarchy-teamviewer-launcher-1.0.0-1-any.pkg.tar.zst
+curl -LO https://github.com/popovoleksandr/omarchy-teamviewer-launcher/releases/download/v1.0.1/omarchy-teamviewer-launcher-1.0.1-1-any.pkg.tar.zst
+sha256sum omarchy-teamviewer-launcher-1.0.1-1-any.pkg.tar.zst    # compare with the release notes
+sudo pacman -U omarchy-teamviewer-launcher-1.0.1-1-any.pkg.tar.zst
 ```
 
 Download it first: `pacman -U` with a link wants a signature file (`.sig`) next to the package, and the release has none. Or build the same package yourself; makepkg downloads the tagged release from GitHub and checks it against the PKGBUILD's checksum:
