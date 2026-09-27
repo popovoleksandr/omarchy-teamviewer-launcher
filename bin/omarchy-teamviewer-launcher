@@ -84,7 +84,8 @@ EOF
 remove_checkout_files() {
   local file tmp
   for file in "$HOME/.local/bin/omarchy-teamviewer-desktop" "$HOME/.local/bin/omarchy-teamviewer-bus-placeholder"; do
-    if [[ -f $file ]] && grep -qs omarchy-teamviewer "$file"; then
+    # The first versions' placeholder never names the project, only its socket.
+    if [[ -f $file ]] && grep -qsE 'omarchy-teamviewer|teamviewer-placeholder-bus' "$file"; then
       rm -f "$file"
       echo "Removed $file"
     fi
