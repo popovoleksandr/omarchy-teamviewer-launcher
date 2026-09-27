@@ -104,7 +104,8 @@ The D-Bus override takes priority over TeamViewer's copy in `/usr/share/dbus-1/s
     Any other scale works the same way; nothing is hard-coded per scale.
 - There is **no local "allow" prompt**. The ID and password alone give full control, the same as TeamViewer on X11. Keep unattended passwords strong, or use only the random one-time password.
 - TeamViewer can't block local input on this backend, so "Disable remote input" and "Show black screen" don't work.
-- Avoid reloading the Hyprland config during a session (`hyprctl reload`, or saving `monitors.lua`). A reload puts your normal resolution and scale back and the partner's picture freezes.
+- Connecting to a locked screen works. If the lock has turned the display off, it comes back on for the session and shows the lock screen, and the partner unlocks it with your password. If the screen is still locked when the session ends, the display turns off again.
+- If something puts your normal scale back during a session, such as a config reload (`hyprctl reload`, or saving `monitors.lua`) or the monitor reconnecting, the partner's picture freezes for up to two seconds until the wrapper switches it back.
 - If a session ends abnormally and the lower resolution stays, run:
   ```sh
   omarchy-teamviewer-launcher restore   # or Setup > TeamViewer > Restore Display, or: hyprctl reload
@@ -159,7 +160,7 @@ Run `omarchy-teamviewer-launcher status` (or `./status.sh` in a checkout) first.
 | `StartServiceByName: Starting com.teamviewer.TeamViewer.Desktop` (daemon) | Good: the bus was found and the helper starts through D-Bus |
 | `DesktopMainLin: FreedesktopPortal SPI created` (helper) | The wrapper wasn't used, so check the D-Bus override (`omarchy-teamviewer-launcher status`) |
 | `DesktopMainLin: WLRoots SPI created` (helper) | Good: the wlroots backend is in use |
-| `Unsupported shared memory buffer (... expected size: ...)` (helper) | A monitor isn't at scale 1 (Hyprland reloaded mid-session, or hyprctl/jq failed) |
+| `Unsupported shared memory buffer (... expected size: ...)` (helper) | A monitor isn't at scale 1. A few seconds of it mid-session is the wrapper catching up after a reload or reconnect. If it doesn't stop, check the wrapper's journal lines: `still … switching again` means Hyprland isn't taking the switch; no lines at all means hyprctl or jq is missing |
 | `Desktop grab succeeded` (helper) | Screen capture works |
 
 ## Files
@@ -186,6 +187,7 @@ Tested on 2026-09-25 and 2026-09-26: Omarchy with Hyprland 0.56.2 (Lua config), 
 - Verified: the daemon finds the bus, the password step works, the wlroots backend is selected, screen capture works at scale 1, and remote mouse and keyboard work (a full working session was driven remotely).
 - Verified on 2026-09-26: the wrapper, started through D-Bus, switched 3840×2160 at 1.25 to 2560×1440 at scale 1 (3072×1728 was refused as a custom mode), then restored 3840×2160 at 1.25 when the helper exited. The same test at scale 1.6 gave 2560×1440 at scale 1, then restored 3840×2160 at 1.6.
 - Verified on 2026-09-26 with a real remote session at scale 2: on connect the display switched to 1920×1080 at scale 1, screen capture and control worked, and on disconnect 3840×2160 at scale 2 came back.
+- Verified on 2026-09-27 with a real remote session to a locked screen at scale 2, with the display turned off by Omarchy's lock. The wrapper turned the display on and switched to 1920×1080 at scale 1 on the first try, capture showed the lock screen, and the partner unlocked it remotely. On disconnect 3840×2160 at scale 2 came back. Without this fix, the same case had failed with `Unsupported shared memory buffer` for the whole attempt. In a separate run with a stand-in helper, a monitor forced back to scale 2 mid-session was switched to scale 1 again within 3 seconds.
 - Verified on 2026-09-26 for the package: `makepkg` builds it and `desktop-file-validate` accepts the desktop entry. From the unpacked package, `enable` wrote the override for the packaged wrapper and removed an earlier checkout install's `~/.local/bin` copies and profile block. Omarchy's own menu parser read the five Setup > TeamViewer rows. The `/etc/profile.d` script started the placeholder only under an SDDM-like parent and only for a user who had run `enable`. The override's `sh -c` fallback was checked on the session `dbus-daemon` with a stand-in service.
 - Not yet verified with the package: a real incoming session after installing it and logging in again.
 - Not yet verified: laptop built-in screens, multiple monitors, rotated monitors, the legacy `hyprland.conf` path, zsh or other login shells.

@@ -102,6 +102,10 @@ Desktop grab succeeded.
 
 At scale 1 the screencopy buffer and the logical size are the same whatever the resolution, so TeamViewer accepts the frames. The wrapper changes the monitor the same way Omarchy's own `omarchy-hyprland-monitor-scaling` does: `hyprctl eval 'hl.monitor({…})'`, or `hyprctl keyword monitor` on a `hyprland.conf` setup. When the helper exits, the saved values are restored. `--restore` does the same by hand.
 
+**Locked screen.** Omarchy's lock turns the displays off (DPMS) a few seconds after locking. Hyprland answers `ok` to a mode change for a display that is off but applies it only when the display comes back on. Until then TeamViewer rejects every frame, and the partner can't see the lock screen to type the password. So if a monitor that needs switching is off, the wrapper turns the displays on first. When the session ends and the screen is still locked (`omarchy-hyprland-session-locked`), it turns them off again, because the lock would otherwise wait for a key press.
+
+**Mid-session changes.** Anything that sets a monitor up again puts its configured scale back: a config reload, the monitor dropping off HDMI and reconnecting, or a switch that didn't take. TeamViewer then rejects frames until the monitor is at scale 1 again, and it picks up again once the monitor is back at scale 1. The wrapper checks every two seconds while the helper runs and switches any scaled monitor back, adding monitors it hasn't seen yet to the saved state. It logs only changes. When the helper exits, it waits for that check to stop before restoring, so nothing is switched again after the restore.
+
 The helper is also started as soon as a connection arrives, before the password check, so the resolution changes for failed attempts too.
 
 ## Why the helper starts where it does

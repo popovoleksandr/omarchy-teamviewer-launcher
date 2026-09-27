@@ -11,8 +11,10 @@
 #      pixel size differs from the monitor's logical (scaled) size.
 # While the helper runs, each scaled monitor switches to scale 1 at the
 # resolution that keeps its layout (3840x2160 at 1.25 -> 3072x1728, at 2 ->
-# 1920x1080), so everything stays the same size. Modes are restored when the
-# helper exits. Run with --restore to put saved modes back by hand.
+# 1920x1080), so everything stays the same size. A monitor that goes back to its
+# scale mid-session is switched again, and a display that is off (as it is on a
+# locked screen) is turned on first. Modes are restored when the helper exits.
+# Run with --restore to put saved modes back by hand.
 
 set -uo pipefail
 
@@ -29,6 +31,10 @@ can_drive_hyprland() {
 
 # Omarchy configures Hyprland in Lua, where monitors change through hl.monitor;
 # older installs use hyprland.conf, where the same change is a monitor keyword.
+lua_config() {
+  [[ -f ${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua ]]
+}
+
 set_monitor() {
   local name=$1 mode=$2 position=$3 scale=$4 transform=$5
 
@@ -39,15 +45,28 @@ set_monitor() {
     return 1
   fi
 
-  if [[ -f ${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua ]]; then
+  if lua_config; then
     hyprctl eval "hl.monitor({ output = \"$name\", mode = \"$mode\", position = \"$position\", scale = $scale, transform = $transform })" >/dev/null
   else
     hyprctl keyword monitor "$name,$mode,$position,$scale,transform,$transform" >/dev/null
   fi
 }
 
+# Turns every display on or off, the way Omarchy's lock does.
+set_dpms() {
+  if lua_config; then
+    hyprctl dispatch "hl.dsp.dpms({ action = \"$([[ $1 == on ]] && echo enable || echo disable)\" })" >/dev/null
+  else
+    hyprctl dispatch dpms "$1" >/dev/null
+  fi
+}
+
 current_size() {
   hyprctl -j monitors | jq -r --arg name "$1" '.[] | select(.name == $name) | "\(.width)x\(.height)"'
+}
+
+current_state() {
+  hyprctl -j monitors | jq -r --arg name "$1" '.[] | select(.name == $name) | "\(.width)x\(.height) at scale \(.scale)"'
 }
 
 # For every scaled monitor prints: name, logical size, a listed mode of exactly
@@ -79,19 +98,29 @@ plan_modes() {
 }
 
 switch_to_logical_resolution() {
-  local monitors
+  local monitors saved='[]'
   monitors=$(hyprctl -j monitors) || return
+  jq -e 'any(.[]; .scale != 1)' <<<"$monitors" >/dev/null || return 0
 
-  # A state file left by a run that never restored holds the real originals;
-  # the monitors are still switched from that run, so don't overwrite it.
-  if [[ ! -s $STATE_FILE ]]; then
-    jq -c '[.[] | select(.scale != 1) | {
+  # Save each monitor's mode before its first switch. A state file left by a run
+  # that never restored holds the real originals, and so does the entry of a
+  # monitor that went back to its scale mid-session, so only add new monitors.
+  [[ -s $STATE_FILE ]] && saved=$(<"$STATE_FILE")
+  jq -c --argjson saved "$saved" '$saved + [.[] | select(.scale != 1)
+    | select(.name as $name | $saved | all(.name != $name)) | {
       name,
       mode: "\(.width)x\(.height)@\(.refreshRate)",
       position: "\(.x)x\(.y)",
       scale,
       transform
-    }]' <<<"$monitors" >"$STATE_FILE" || return
+    }]' <<<"$monitors" >"$STATE_FILE.new" && mv "$STATE_FILE.new" "$STATE_FILE" || return
+
+  # Hyprland accepts a new mode for a display that is off, but applies it only
+  # when the display comes back on. Omarchy's lock turns displays off a few
+  # seconds after locking, and until they're on TeamViewer rejects every frame.
+  if jq -e 'any(.[]; .scale != 1 and .dpmsStatus == false)' <<<"$monitors" >/dev/null; then
+    set_dpms on
+    log "turned the displays on for TeamViewer (they were off, as on a locked screen)"
   fi
 
   plan_modes <<<"$monitors" |
@@ -106,8 +135,39 @@ switch_to_logical_resolution() {
           set_monitor "$name" "$nearest" auto 1 "$transform"
         fi
       fi
-      log "$name: $(current_size "$name") at scale 1 for TeamViewer (logical size $size)"
+      state=$(current_state "$name")
+      if [[ $state == *" at scale 1" ]]; then
+        log "$name: $state for TeamViewer (logical size $size)"
+      else
+        log "$name: still $state, switching again while TeamViewer runs"
+      fi
     done
+}
+
+# Anything that sets a monitor up again puts its own scale back: a hotplug, a
+# config reload, a display that stayed off. Check every two seconds while the
+# helper runs. Only changes are logged, so a monitor that won't switch doesn't
+# fill the journal.
+keep_scale_one() {
+  local child=$1 last="" out
+  while sleep 2 && kill -0 "$child" 2>/dev/null; do
+    out=$(switch_to_logical_resolution 2>&1)
+    [[ -n $out && $out != "$last" ]] && printf '%s\n' "$out" >&2
+    last=$out
+  done
+}
+
+# Runs once the helper has exited. The keeper notices within two seconds; wait
+# for it so it can't switch a monitor again after the restore.
+end_session() {
+  [[ -n ${keeper:-} ]] && wait "$keeper"
+  restore_scales
+  # The displays may have been turned on for the session. A locked screen turns
+  # them off only after the next key press, so do it now.
+  if command -v omarchy-hyprland-session-locked >/dev/null && omarchy-hyprland-session-locked; then
+    set_dpms off
+    log "turned the displays off again (the screen is locked)"
+  fi
 }
 
 restore_scales() {
@@ -131,15 +191,21 @@ case ":${XDG_CURRENT_DESKTOP:-}:" in
 *) export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:+$XDG_CURRENT_DESKTOP:}wlroots" ;;
 esac
 
+drive_hyprland=false
 if can_drive_hyprland; then
+  drive_hyprland=true
   switch_to_logical_resolution
-  trap restore_scales EXIT
+  trap end_session EXIT
 else
   log "hyprctl, jq or HYPRLAND_INSTANCE_SIGNATURE missing; leaving monitor scales alone"
 fi
 
 "$TV_DESKTOP" "$@" &
 child=$!
+if $drive_hyprland; then
+  keep_scale_one "$child" &
+  keeper=$!
+fi
 trap 'kill -TERM "$child" 2>/dev/null' TERM INT HUP
 
 # wait returns early whenever a trapped signal arrives, so keep waiting until
