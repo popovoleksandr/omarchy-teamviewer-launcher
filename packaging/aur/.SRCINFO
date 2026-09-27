@@ -11,6 +11,6 @@ pkgbase = omarchy-teamviewer-launcher
 	depends = jq
 	depends = teamviewer
 	source = omarchy-teamviewer-launcher-1.0.0.tar.gz::https://github.com/popovoleksandr/omarchy-teamviewer-launcher/archive/refs/tags/v1.0.0.tar.gz
-	sha256sums = SKIP
+	sha256sums = d0ec9e1fd2a12f8aa675e694978a2b6a2a09cafabb7870e7a4e9dfe3bf93efd9
 
 pkgname = omarchy-teamviewer-launcher

@@ -9,7 +9,7 @@ license=(MIT)
 depends=(bash dbus jq teamviewer)
 install=omarchy-teamviewer-launcher.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('d0ec9e1fd2a12f8aa675e694978a2b6a2a09cafabb7870e7a4e9dfe3bf93efd9')
 
 package() {
   cd "$pkgname-$pkgver"
