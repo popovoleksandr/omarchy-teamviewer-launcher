@@ -15,11 +15,16 @@
 # scale mid-session is switched again, and a display that is off (as it is on a
 # locked screen) is turned on first. Modes are restored when the helper exits.
 # Run with --restore to put saved modes back by hand.
+#
+# teamviewerd retries a few seconds apart, so a new helper can start while an
+# older one is still running. The older one is ended first, since it holds
+# TeamViewer's lock, and only the last wrapper to exit restores the modes.
 
 set -uo pipefail
 
 TV_DESKTOP=/opt/teamviewer/tv_bin/TeamViewer_Desktop
 STATE_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omarchy-teamviewer-scales.json"
+LOCK_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omarchy-teamviewer-desktop.lock"
 
 log() {
   echo "omarchy-teamviewer-desktop: $*" >&2
@@ -157,10 +162,36 @@ keep_scale_one() {
   done
 }
 
+# teamviewerd starts a helper only once it has given up on the previous one, but
+# that one can still be running: shutting down, or stuck for good after a
+# session in which its screen capture got no frames. It holds TeamViewer's lock
+# in $XDG_RUNTIME_DIR, so the new helper would quit after a few seconds, and so
+# would every one after it. A stuck helper ignores SIGTERM.
+end_stale_helpers() {
+  local pids _
+  mapfile -t pids < <(pgrep -u "$UID" -f "^$TV_DESKTOP")
+  ((${#pids[@]})) || return 0
+  log "ending TeamViewer helper ${pids[*]} left from an earlier session"
+  kill -TERM "${pids[@]}" 2>/dev/null
+  for _ in 1 2 3 4 5 6; do
+    sleep 0.5
+    pgrep -u "$UID" -f "^$TV_DESKTOP" >/dev/null || return 0
+  done
+  log "helper ${pids[*]} ignored SIGTERM, killing it"
+  kill -KILL "${pids[@]}" 2>/dev/null
+}
+
 # Runs once the helper has exited. The keeper notices within two seconds; wait
 # for it so it can't switch a monitor again after the restore.
 end_session() {
   [[ -n ${keeper:-} ]] && wait "$keeper"
+  # A newer helper may already be running. Restoring now would change the mode
+  # under it and, on a locked screen, turn its displays off; its wrapper holds
+  # the lock too and restores the modes when it's done.
+  if $have_lock && ! flock -xn 9; then
+    log "another TeamViewer helper is running; leaving the displays to it"
+    return
+  fi
   restore_scales
   # The displays may have been turned on for the session. A locked screen turns
   # them off only after the next key press, so do it now.
@@ -186,6 +217,18 @@ if [[ ${1:-} == --restore ]]; then
   exit
 fi
 
+# Every wrapper holds this lock shared while its helper runs and takes it
+# exclusively to restore. So a new wrapper waits for a restore in progress
+# before it switches, and ending a stale helper below doesn't make that
+# helper's wrapper restore the modes under the new one.
+have_lock=false
+if exec 9>>"$LOCK_FILE" && flock -s -w 10 9; then
+  have_lock=true
+else
+  log "could not lock $LOCK_FILE; the modes are restored when this helper exits, even if another one runs"
+fi
+end_stale_helpers
+
 case ":${XDG_CURRENT_DESKTOP:-}:" in
 *:wlroots:*) ;;
 *) export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:+$XDG_CURRENT_DESKTOP:}wlroots" ;;
@@ -200,7 +243,9 @@ else
   log "hyprctl, jq or HYPRLAND_INSTANCE_SIGNATURE missing; leaving monitor scales alone"
 fi
 
-"$TV_DESKTOP" "$@" &
+# The helper doesn't get the lock: one stuck after its wrapper is gone would
+# keep every later wrapper from restoring.
+"$TV_DESKTOP" "$@" 9>&- &
 child=$!
 if $drive_hyprland; then
   keep_scale_one "$child" &

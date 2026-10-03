@@ -108,6 +108,11 @@ At scale 1 the screencopy buffer and the logical size are the same whatever the 
 
 The helper is also started as soon as a connection arrives, before the password check, so the resolution changes for failed attempts too.
 
+**Overlapping helpers.** teamviewerd starts a new helper once it has given up on the previous one, and retries about every 12 seconds while starts fail. The previous helper can still be running then. On 2026-10-03 one never exited. A retry failed because the helper before it was still shutting down. Its wrapper then restored scale 2 and turned the displays off (the screen was locked), just as the next helper started capturing. Hyprland held the mode change back while the displays were off, so the new wrapper still saw scale 1 and didn't step in, and the capture got no frames. When the partner disconnected 17 minutes later, that helper ignored the daemon's request to stop. It kept TeamViewer's lock, `$XDG_RUNTIME_DIR/TeamViewer_desktop_1.lock`, so for five hours every new helper logged `Cannot acquire lock … locked by other process` and quit after a few seconds. Each of those retries switched the display back and forth. Two changes in the wrapper prevent this:
+
+- Every wrapper holds `$XDG_RUNTIME_DIR/omarchy-teamviewer-desktop.lock` shared while its helper runs, and restores only if it can take the lock exclusively. Only the last wrapper to exit restores the modes or turns the displays off, and a new wrapper waits for a restore in progress before it switches.
+- Before starting its helper, the wrapper ends any older `TeamViewer_Desktop` of the same user: SIGTERM, then SIGKILL after three seconds, because a stuck helper ignores SIGTERM. teamviewerd has already given up on it, so no session depends on it.
+
 ## Why the helper starts where it does
 
 For reference, when the daemon starts the helper through D-Bus:
