@@ -12,8 +12,9 @@
 # While the helper runs, each scaled monitor switches to scale 1 at the
 # resolution that keeps its layout (3840x2160 at 1.25 -> 3072x1728, at 2 ->
 # 1920x1080), so everything stays the same size. A monitor that goes back to its
-# scale mid-session is switched again, and a display that is off (as it is on a
-# locked screen) is turned on first. Modes are restored when the helper exits.
+# scale mid-session is switched again, a display that is off (as it is on a
+# locked screen) is turned on first, and with no display at all Omarchy is asked
+# to turn the laptop panel on. Modes are restored when the helper exits.
 # Run with --restore to put saved modes back by hand.
 #
 # teamviewerd retries a few seconds apart, so a new helper can start while an
@@ -105,6 +106,22 @@ plan_modes() {
 switch_to_logical_resolution() {
   local monitors saved='[]'
   monitors=$(hyprctl -j monitors) || return
+
+  # With no display at all TeamViewer has nothing to capture. A laptop gets
+  # there with its lid shut when the external monitor drops off HDMI while
+  # asleep. Omarchy turns the laptop panel on for that, but only on a wake or a
+  # lid event, so ask it now. Hyprland may list its FALLBACK placeholder then.
+  if jq -e 'all(.[]; .name == "FALLBACK")' <<<"$monitors" >/dev/null; then
+    if command -v omarchy-hyprland-monitor-clamshell >/dev/null; then
+      omarchy-hyprland-monitor-clamshell >/dev/null 2>&1
+      monitors=$(hyprctl -j monitors) || return
+    fi
+    if jq -e 'all(.[]; .name == "FALLBACK")' <<<"$monitors" >/dev/null; then
+      log "no display is on, so TeamViewer has nothing to show until one comes back"
+      return 0
+    fi
+    log "no display was on (an external monitor asleep, a laptop lid shut); Omarchy turned on $(jq -r 'map(.name) | join(", ")' <<<"$monitors")"
+  fi
 
   # Hyprland draws nothing on a display that is off, so TeamViewer's first
   # frame never comes and the partner waits at "waiting for partner to confirm
