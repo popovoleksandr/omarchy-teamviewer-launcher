@@ -105,6 +105,18 @@ plan_modes() {
 switch_to_logical_resolution() {
   local monitors saved='[]'
   monitors=$(hyprctl -j monitors) || return
+
+  # Hyprland draws nothing on a display that is off, so TeamViewer's first
+  # frame never comes and the partner waits at "waiting for partner to confirm
+  # the request" for good. Omarchy's lock turns displays off 5 s after locking
+  # and again 5 s after each key press on the lock screen. Hyprland also
+  # accepts a new mode for a display that is off but applies it only when the
+  # display comes back on. Whatever the scale, then, displays must be on.
+  if jq -e 'any(.[]; .dpmsStatus == false)' <<<"$monitors" >/dev/null; then
+    set_dpms on
+    log "turned the displays on for TeamViewer (they were off, as on a locked screen)"
+  fi
+
   jq -e 'any(.[]; .scale != 1)' <<<"$monitors" >/dev/null || return 0
 
   # Save each monitor's mode before its first switch. A state file left by a run
@@ -120,14 +132,6 @@ switch_to_logical_resolution() {
       transform
     }]' <<<"$monitors" >"$STATE_FILE.new" && mv "$STATE_FILE.new" "$STATE_FILE" || return
 
-  # Hyprland accepts a new mode for a display that is off, but applies it only
-  # when the display comes back on. Omarchy's lock turns displays off a few
-  # seconds after locking, and until they're on TeamViewer rejects every frame.
-  if jq -e 'any(.[]; .scale != 1 and .dpmsStatus == false)' <<<"$monitors" >/dev/null; then
-    set_dpms on
-    log "turned the displays on for TeamViewer (they were off, as on a locked screen)"
-  fi
-
   plan_modes <<<"$monitors" |
     while IFS=$'\t' read -r name size exact custom nearest transform; do
       if [[ $exact != - ]]; then
@@ -141,6 +145,9 @@ switch_to_logical_resolution() {
         fi
       fi
       state=$(current_state "$name")
+      # Gone since the snapshot, like a lid-closed laptop panel that a wake
+      # turned on for a moment.
+      [[ -n $state ]] || continue
       if [[ $state == *" at scale 1" ]]; then
         log "$name: $state for TeamViewer (logical size $size)"
       else
@@ -202,9 +209,17 @@ end_session() {
 }
 
 restore_scales() {
+  local disabled
   [[ -s $STATE_FILE ]] || return 0
 
-  jq -r '.[] | [.name, .mode, .position, .scale, .transform] | @tsv' "$STATE_FILE" |
+  # A monitor turned off since it was saved, such as a laptop panel that
+  # Omarchy's clamshell mode turned off again after a wake had turned it on,
+  # would be turned back on by restoring its mode. Leave it off.
+  disabled=$(hyprctl -j monitors all | jq -c '[.[] | select(.disabled) | .name]')
+  [[ -n $disabled ]] || disabled='[]'
+
+  jq -r --argjson disabled "$disabled" '.[] | select(.name as $name | $disabled | index($name) | not)
+    | [.name, .mode, .position, .scale, .transform] | @tsv' "$STATE_FILE" |
     while IFS=$'\t' read -r name mode position scale transform; do
       set_monitor "$name" "$mode" "$position" "$scale" "$transform" && log "$name: $mode at scale $scale restored"
     done
