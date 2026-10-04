@@ -1,6 +1,6 @@
 # Maintainer: Oleksandr Popov <anantaramdas@outlook.com>
 pkgname=omarchy-teamviewer-launcher
-pkgver=1.0.2
+pkgver=1.0.3
 pkgrel=1
 pkgdesc="Makes incoming TeamViewer connections work on Omarchy's uwsm-managed Hyprland desktop"
 arch=(any)
@@ -9,7 +9,7 @@ license=(MIT)
 depends=(bash dbus jq teamviewer)
 install=omarchy-teamviewer-launcher.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('e2502b0699711d00c459cb37ef8400bc2bc1ea5b0a6e4a2169e4f0a89e0b9cdc')
+sha256sums=('49998457d1b782084a519efb82c112966096179ba41f44cc199a91aa5cb374f5')
 
 package() {
   cd "$pkgname-$pkgver"
